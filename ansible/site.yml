@@ -1,0 +1,68 @@
+---
+- name: Provision and deploy the chat application
+  hosts: chat
+  become: true
+  vars:
+    app_dir: /opt/chat-app
+    repository_url: "https://github.com/Nizamuddin8053/chat.git"
+    repository_branch: main
+    frontend_origin: "{{ required_frontend_origin }}"
+    mongodb_uri: "{{ required_mongodb_uri }}"
+    jwt_secret: "{{ required_jwt_secret }}"
+
+  tasks:
+    - name: Install host dependencies
+      ansible.builtin.apt:
+        name:
+          - ca-certificates
+          - curl
+          - git
+          - docker.io
+          - docker-compose-v2
+        state: present
+        update_cache: true
+
+    - name: Enable Docker
+      ansible.builtin.service:
+        name: docker
+        state: started
+        enabled: true
+
+    - name: Add the SSH user to the docker group
+      ansible.builtin.user:
+        name: "{{ ansible_user }}"
+        groups: docker
+        append: true
+
+    - name: Check out the application
+      ansible.builtin.git:
+        repo: "{{ repository_url }}"
+        version: "{{ repository_branch }}"
+        dest: "{{ app_dir }}"
+        force: true
+
+    - name: Write production environment
+      ansible.builtin.copy:
+        dest: "{{ app_dir }}/.env"
+        mode: "0600"
+        content: |
+          MONGODB_URI={{ mongodb_uri }}
+          JWT_SECRET={{ jwt_secret }}
+          PORT=5001
+          NODE_ENV=production
+          FRONTEND_ORIGIN={{ frontend_origin }}
+          FRONTEND_PORT=80
+
+    - name: Build and start the Compose stack
+      ansible.builtin.command:
+        cmd: docker compose up -d --build --remove-orphans
+        chdir: "{{ app_dir }}"
+
+    - name: Wait for the application health endpoint
+      ansible.builtin.uri:
+        url: http://127.0.0.1/health
+        status_code: 200
+      register: health_check
+      retries: 30
+      delay: 10
+      until: health_check.status == 200

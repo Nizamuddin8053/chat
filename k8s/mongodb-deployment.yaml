@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
       - name: mongodb
-        image: iemafzal/mongodb:v1
+        image: nzmk80/mongodb:v1
         ports:
         - containerPort: 27017
         env:

@@ -82,6 +82,60 @@ NODE_ENV=production
 git clone https://github.com/Nizamuddin8053/chat.git
 ```
 
+## AWS deployment
+
+The repository includes a cost-conscious EC2 deployment that runs the existing
+Docker Compose stack. Terraform creates one Ubuntu EC2 instance, a restricted
+security group, and an SSH key pair. Ansible installs Docker and deploys the
+application. No MongoDB port is exposed publicly.
+
+### Prerequisites
+
+Install and authenticate:
+
+* AWS CLI with credentials that can manage EC2, VPC security groups, and key pairs
+* Terraform 1.6 or newer
+* Ansible and OpenSSH (PowerShell 7 is recommended on Windows)
+* Docker, if you want to run the local validation commands
+
+Create an SSH key pair before deploying:
+
+```powershell
+ssh-keygen -t ed25519 -f $HOME\.ssh\chat-app-deploy
+```
+
+Set the two application secrets without putting them in source control:
+
+```powershell
+$env:CHAT_MONGODB_URI = "mongodb+srv://user:password@cluster.example/chatApp"
+$env:CHAT_JWT_SECRET = "replace-with-a-long-random-secret"
+```
+
+Deploy everything with one command:
+
+```powershell
+.\deploy.ps1 -Action deploy
+```
+
+The script defaults to `ap-south-1` and automatically limits SSH to the current
+public IP. Override `-AwsRegion`, `-AdminCidr`, `-MongoDbUri`, or `-JwtSecret`
+when needed. Terraform state is kept locally in `infra/`, so use the same
+checkout when destroying the environment:
+
+```powershell
+.\deploy.ps1 -Action destroy
+```
+
+`destroy` removes the EC2 instance, security group, and key pair. It does not
+delete data in an external MongoDB cluster. The command is intentionally
+separate from deployment so the application is not destroyed immediately after
+it starts.
+
+The Jenkins pipeline uses the same Terraform and Ansible flow. Create the
+credential IDs referenced in [Jenkinsfile](./Jenkinsfile) before enabling the
+pipeline, and keep AWS authentication in Jenkins' standard AWS credential
+provider rather than committing credentials.
+
 🏗️ Build and Run the Application
 
 Follow these steps to build and run the application:
@@ -227,8 +281,6 @@ This project is evolving, and here are a few exciting things on the horizon:
 
 
 This project is licensed under the MIT License. See the LICENSE file for more details.
-
-
 
 
 

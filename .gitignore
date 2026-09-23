@@ -12,6 +12,14 @@ dist
 dist-ssr
 *.local
 
+# Terraform state and generated deployment files
+infra/.terraform/
+infra/*.tfstate
+infra/*.tfstate.*
+infra/.terraform.lock.hcl
+*.tfvars
+!terraform.tfvars.example
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
@@ -22,4 +30,3 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
-

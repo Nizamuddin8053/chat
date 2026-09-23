@@ -1,8 +1,10 @@
 import { v2 as cloudinary } from "cloudinary";
 
 import { config } from "dotenv";
+import path from "path";
 
-config();
+// Load .env from project root (one level up from backend directory)
+config({ path: path.resolve(process.cwd(), "../.env") });
 
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,

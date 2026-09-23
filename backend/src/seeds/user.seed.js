@@ -1,8 +1,10 @@
 import { config } from "dotenv";
+import path from "path";
 import { connectDB } from "../lib/db.js";
 import User from "../models/user.model.js";
 
-config();
+// Load .env from project root when running seeds from backend folder
+config({ path: path.resolve(process.cwd(), "../.env") });
 
 const seedUsers = [
   // Female Users

@@ -15,13 +15,13 @@ spec:
     spec:
       containers:
       - name: backend
-        image: iemafzal/backend:v1
+        image: nzmk80/backend:v1
         imagePullPolicy: Always
         ports:
         - containerPort: 5001
         env:
         - name: MONGODB_URI
-          value: "mongodb://root:admin@mongodb:27017/chatApp?authSource=admin"
+          value: "mongodb://root:admin@mongo:27017/chatApp?authSource=admin&retryWrites=true&w=majority"
         - name: PORT
           value: "5001"
         - name: NODE_ENV

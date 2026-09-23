@@ -17,6 +17,9 @@ FROM node:18-alpine
 # Set working directory
 WORKDIR /app
 
+# Required by the container health check.
+RUN apk add --no-cache curl
+
 # Create a non-root user
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 
