@@ -60,7 +60,7 @@
 
     - name: Wait for the application health endpoint
       ansible.builtin.uri:
-        url: http://127.0.0.1:50001/health
+        url: http://127.0.0.1:5001/health
         status_code: 200
       register: health_check
       retries: 30
