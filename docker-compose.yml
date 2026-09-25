@@ -5,8 +5,6 @@ services:
       dockerfile: Dockerfile
     ports:
       - "${FRONTEND_PORT:-8080}:80"
-    depends_on:
-      - backend
     networks:
       - chat-network
     environment:
@@ -19,23 +17,8 @@ services:
       dockerfile: Dockerfile
     ports:
       - "5001:5001"
-    depends_on:
-      - mongo
     env_file:
       - .env
-    networks:
-      - chat-network
-    restart: unless-stopped
-
-  mongo:
-    image: mongo:latest
-    ports:
-      - "27017:27017"
-    environment:
-      - MONGO_INITDB_ROOT_USERNAME=root
-      - MONGO_INITDB_ROOT_PASSWORD=admin
-    volumes:
-      - mongodb_data:/data/db
     networks:
       - chat-network
     restart: unless-stopped
@@ -44,8 +27,6 @@ networks:
   chat-network:
     driver: bridge
 
-volumes:
-  mongodb_data:
 
 
 
