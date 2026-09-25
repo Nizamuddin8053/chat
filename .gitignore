@@ -30,3 +30,4 @@ infra/.terraform.lock.hcl
 *.njsproj
 *.sln
 *.sw?
+.env
