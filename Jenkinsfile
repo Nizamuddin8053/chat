@@ -1,9 +1,10 @@
 pipeline {
     agent any
-    
+
     triggers {
-       githubPush()
+        githubPush()
     }
+
     options {
         disableConcurrentBuilds()
         timestamps()
@@ -28,21 +29,39 @@ pipeline {
 
     stages {
 
+        /*
+         * ==========================================
+         * CHECKOUT
+         * ==========================================
+         */
+
         stage('Checkout') {
             steps {
                 checkout scm
             }
         }
 
+
+        /*
+         * ==========================================
+         * TERRAFORM INIT
+         * ==========================================
+         */
+
         stage('Terraform Init') {
             steps {
-                sh '''
-                    set -eu
-
+                bat '''
                     terraform -chdir=infra init -input=false
                 '''
             }
         }
+
+
+        /*
+         * ==========================================
+         * TERRAFORM VALIDATE
+         * ==========================================
+         */
 
         stage('Terraform Validate') {
             when {
@@ -52,14 +71,22 @@ pipeline {
             }
 
             steps {
-                sh '''
-                    set -eu
-
+                bat '''
                     terraform -chdir=infra fmt -check
+                    if errorlevel 1 exit /b 1
+
                     terraform -chdir=infra validate
+                    if errorlevel 1 exit /b 1
                 '''
             }
         }
+
+
+        /*
+         * ==========================================
+         * BUILD DOCKER IMAGES
+         * ==========================================
+         */
 
         stage('Build Docker Images') {
             when {
@@ -69,14 +96,22 @@ pipeline {
             }
 
             steps {
-                sh '''
-                    set -eu
-
+                bat '''
                     docker compose config -q
+                    if errorlevel 1 exit /b 1
+
                     docker compose build
+                    if errorlevel 1 exit /b 1
                 '''
             }
         }
+
+
+        /*
+         * ==========================================
+         * TERRAFORM DEPLOY
+         * ==========================================
+         */
 
         stage('Terraform Deploy') {
             when {
@@ -94,16 +129,19 @@ pipeline {
                         secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
                     ]
                 ]) {
-                    sh '''
-                        set -eu
-
-                        terraform -chdir=infra apply \
-                            -auto-approve \
-                            -input=false
+                    bat '''
+                        terraform -chdir=infra apply -auto-approve -input=false
                     '''
                 }
             }
         }
+
+
+        /*
+         * ==========================================
+         * GET EC2 PUBLIC IP
+         * ==========================================
+         */
 
         stage('Get EC2 Public IP') {
             when {
@@ -114,13 +152,23 @@ pipeline {
 
             steps {
                 script {
-                    env.PUBLIC_IP = sh(
-                        script: '''
-                            terraform -chdir=infra output -raw public_ip
-                        ''',
+
+                    def publicIp = bat(
+                        script: 'terraform -chdir=infra output -raw public_ip',
                         returnStdout: true
                     ).trim()
 
+                    // Remove possible command echo / whitespace
+                    publicIp = publicIp
+                        .readLines()
+                        .findAll { line ->
+                            line?.trim() &&
+                            !line.contains('terraform -chdir')
+                        }
+                        .last()
+                        .trim()
+
+                    env.PUBLIC_IP = publicIp
                     env.APPLICATION_URL = "http://${env.PUBLIC_IP}"
 
                     echo "EC2 Public IP: ${env.PUBLIC_IP}"
@@ -128,6 +176,13 @@ pipeline {
                 }
             }
         }
+
+
+        /*
+         * ==========================================
+         * CREATE ANSIBLE INVENTORY
+         * ==========================================
+         */
 
         stage('Create Ansible Inventory') {
             when {
@@ -137,18 +192,23 @@ pipeline {
             }
 
             steps {
-                sh '''
-                    set -eu
+                bat '''
+                    (
+                        echo [chat]
+                        echo %PUBLIC_IP% ansible_user=ubuntu
+                    ) > inventory.ini
 
-                    cat > inventory.ini <<EOF
-[chat]
-${PUBLIC_IP} ansible_user=ubuntu
-EOF
-
-                    cat inventory.ini
+                    type inventory.ini
                 '''
             }
         }
+
+
+        /*
+         * ==========================================
+         * DEPLOY APPLICATION WITH ANSIBLE
+         * ==========================================
+         */
 
         stage('Deploy Application with Ansible') {
             when {
@@ -159,6 +219,7 @@ EOF
 
             steps {
                 withCredentials([
+
                     string(
                         credentialsId: 'chat-mongodb-uri',
                         variable: 'CHAT_MONGODB_URI'
@@ -174,21 +235,26 @@ EOF
                         keyFileVariable: 'SSH_PRIVATE_KEY',
                         usernameVariable: 'SSH_USERNAME'
                     )
+
                 ]) {
 
-                    sh '''
-                        set -eu
-
-                        ansible-playbook \
-                            ansible/site.yml \
-                            -i inventory.ini \
-                            --private-key "$SSH_PRIVATE_KEY" \
-                            --extra-vars "required_frontend_origin=http://$PUBLIC_IP required_mongodb_uri=$CHAT_MONGODB_URI required_jwt_secret=$CHAT_JWT_SECRET" \
+                    bat '''
+                        ansible-playbook ansible/site.yml ^
+                            -i inventory.ini ^
+                            --private-key "%SSH_PRIVATE_KEY%" ^
+                            --extra-vars "required_frontend_origin=http://%PUBLIC_IP% required_mongodb_uri=%CHAT_MONGODB_URI% required_jwt_secret=%CHAT_JWT_SECRET%" ^
                             --ssh-extra-args "-o StrictHostKeyChecking=no"
                     '''
                 }
             }
         }
+
+
+        /*
+         * ==========================================
+         * VERIFY PUBLIC APPLICATION
+         * ==========================================
+         */
 
         stage('Verify Public Application') {
             when {
@@ -198,26 +264,41 @@ EOF
             }
 
             steps {
-                sh '''
-                    set -eu
+                bat '''
+                    echo Checking public application...
 
-                    echo "Checking public application..."
+                    set "RETRY_COUNT=0"
 
-                    for i in $(seq 1 30); do
-                        if curl -fsS "$APPLICATION_URL/health" > /dev/null; then
-                            echo "Application is publicly reachable."
-                            exit 0
-                        fi
+                    :CHECK_APPLICATION
 
-                        echo "Waiting for application..."
-                        sleep 10
-                    done
+                    curl -fsS "%APPLICATION_URL%/health" > nul 2>&1
 
-                    echo "Application did not become reachable."
-                    exit 1
+                    if not errorlevel 1 (
+                        echo Application is publicly reachable.
+                        exit /b 0
+                    )
+
+                    set /a RETRY_COUNT+=1
+
+                    if %RETRY_COUNT% GEQ 30 (
+                        echo Application did not become reachable.
+                        exit /b 1
+                    )
+
+                    echo Waiting for application...
+                    timeout /t 10 /nobreak > nul
+
+                    goto CHECK_APPLICATION
                 '''
             }
         }
+
+
+        /*
+         * ==========================================
+         * DESTROY INFRASTRUCTURE
+         * ==========================================
+         */
 
         stage('Destroy Infrastructure') {
             when {
@@ -235,22 +316,29 @@ EOF
                         secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
                     ]
                 ]) {
-                    sh '''
-                        set -eu
 
-                        terraform -chdir=infra destroy \
-                            -auto-approve \
-                            -input=false
+                    bat '''
+                        terraform -chdir=infra destroy -auto-approve -input=false
                     '''
                 }
             }
         }
     }
 
+
+    /*
+     * ==========================================
+     * POST ACTIONS
+     * ==========================================
+     */
+
     post {
+
         success {
             script {
+
                 if (params.ACTION == 'deploy') {
+
                     echo """
 ==================================================
 CHAT APPLICATION DEPLOYED
@@ -264,7 +352,9 @@ ${env.PUBLIC_IP}
 
 ==================================================
 """
+
                 } else {
+
                     echo """
 ==================================================
 ALL TERRAFORM RESOURCES DESTROYED
@@ -279,9 +369,9 @@ ALL TERRAFORM RESOURCES DESTROYED
         }
 
         always {
-            sh '''
-                rm -f inventory.ini || true
+            bat '''
+                if exist inventory.ini del /f /q inventory.ini
             '''
         }
     }
-}             
+}
