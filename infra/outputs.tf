@@ -4,6 +4,6 @@ output "public_ip" {
 }
 
 output "application_url" {
-  description = "URL of the deployed application."
+  description = "Public URL of the deployed chat application."
   value       = "http://${aws_instance.chat.public_ip}"
 }

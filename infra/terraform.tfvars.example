@@ -1,9 +1,0 @@
-aws_region       = "ap-south-1"
-project_name     = "chat-app"
-instance_type    = "t3.small"
-root_volume_size = 20
-key_name         = "chat-app-deploy"
-admin_cidr       = "202.89.79.44/32"
-
-# Set TF_VAR_ssh_public_key in the environment or let deploy.ps1 read it
-# from the private key's .pub file.

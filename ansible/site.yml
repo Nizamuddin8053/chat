@@ -2,16 +2,27 @@
 - name: Provision and deploy the chat application
   hosts: chat
   become: true
+
+
   vars:
     app_dir: /opt/chat-app
     repository_url: "https://github.com/Nizamuddin8053/chat.git"
     repository_branch: main
+
+
     frontend_origin: "{{ required_frontend_origin }}"
     mongodb_uri: "{{ required_mongodb_uri }}"
     jwt_secret: "{{ required_jwt_secret }}"
 
   tasks:
-    - name: Install host dependencies
+
+    - name: Wait for SSH connection
+      ansible.builtin.wait_for_connection:
+        timeout: 300
+        delay: 5
+
+
+    - name: Install required packages
       ansible.builtin.apt:
         name:
           - ca-certificates
@@ -28,11 +39,20 @@
         state: started
         enabled: true
 
-    - name: Add the SSH user to the docker group
+    - name: Add ubuntu user to docker group
       ansible.builtin.user:
         name: "{{ ansible_user }}"
         groups: docker
         append: true
+
+    - name: Create application directory
+      ansible.builtin.file:
+        path: "{{ app_dir }}"
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user}}"
+        mode: "0755"
+
 
     - name: Check out the application
       ansible.builtin.git:
@@ -44,6 +64,8 @@
     - name: Write production environment
       ansible.builtin.copy:
         dest: "{{ app_dir }}/.env"
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
         mode: "0600"
         content: |
           MONGODB_URI={{ mongodb_uri }}
@@ -53,12 +75,19 @@
           FRONTEND_ORIGIN={{ frontend_origin }}
           FRONTEND_PORT=80
 
+    - name: Stop old Compose stack
+      ansible.builtin.command:
+        cmd: docker compose down
+        chdir: "{{ app_dir }}"
+      failed_when: false
+
+
     - name: Build and start the Compose stack
       ansible.builtin.command:
         cmd: docker compose up -d --build --remove-orphans
         chdir: "{{ app_dir }}"
 
-    - name: Wait for the application health endpoint
+    - name: Wait for backend health endpoint
       ansible.builtin.uri:
         url: http://127.0.0.1:5001/health
         status_code: 200
@@ -66,3 +95,11 @@
       retries: 30
       delay: 10
       until: health_check.status == 200
+
+
+    - name: Display health status
+      ansible.builtin.debug:
+        msg: "Backend health check passed"
+
+
+
