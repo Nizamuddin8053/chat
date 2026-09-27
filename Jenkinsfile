@@ -19,6 +19,7 @@ pipeline {
     }
 
     environment {
+        PATH = "C:\Users\acer\AppData\Local\Microsoft\WinGet\Packages\Hashicorp.Terraform_Microsoft.Winget.Source_8wekyb3d8bbwe\terraform.exe"
         TF_IN_AUTOMATION = 'true'
         TF_VAR_aws_region = 'ap-south-1'
 
