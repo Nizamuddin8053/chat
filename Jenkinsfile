@@ -43,6 +43,23 @@ pipeline {
 
 
         /*
+         * =========================================
+         * Check path of Terraform
+         * ========================================= 
+        */
+
+        stage('Check Terraform') {
+            steps {
+               bat '''
+                  echo PATH=%PATH%
+                  where terraform
+                  terraform version
+               '''
+            }
+        }
+
+
+        /*
          * ==========================================
          * TERRAFORM INIT
          * ==========================================
