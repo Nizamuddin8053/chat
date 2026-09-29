@@ -1,4 +1,4 @@
-```groovy
+
 pipeline {
     agent any
 
@@ -354,4 +354,4 @@ Share this URL with users.
         }
     }
 }
-```
+
