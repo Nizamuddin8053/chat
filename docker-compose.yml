@@ -7,15 +7,18 @@ services:
     
     container_name: chat-backend
 
-    env_file:
-      - .env
-
     ports:
       - "5001:5001"
 
     environment:
       PORT: 5001
       NODE_ENV: production
+      MONGODB_URI: ${MONGODB_URI:?MONGODB_URI must be set}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost}
+      CLOUDINARY_CLOUD_NAME: ${CLOUDINARY_CLOUD_NAME:-}
+      CLOUDINARY_API_KEY: ${CLOUDINARY_API_KEY:-}
+      CLOUDINARY_API_SECRET: ${CLOUDINARY_API_SECRET:-}
 
     restart: unless-stopped
 
@@ -48,4 +51,3 @@ services:
         condition: service_healthy
 
     restart: unless-stopped
-
