@@ -20,6 +20,7 @@ pipeline {
 
     environment {
         PATH = "C:\\Users\\acer\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Hashicorp.Terraform_Microsoft.Winget.Source_8wekyb3d8bbwe;${env.PATH}"
+
         TF_IN_AUTOMATION = 'true'
         TF_VAR_aws_region = 'ap-south-1'
 
@@ -30,56 +31,41 @@ pipeline {
 
     stages {
 
-        /*
-         * ==========================================
-         * CHECKOUT
-         * ==========================================
-         */
-
         stage('Checkout') {
             steps {
                 checkout scm
             }
         }
 
-
-        /*
-         * =========================================
-         * Check path of Terraform
-         * ========================================= 
-        */
-
-        stage('Check Terraform') {
+        stage('Check Tools') {
             steps {
-               bat '''
-                  echo PATH=%PATH%
-                  where terraform
-                  terraform version
-               '''
+                bat '''
+                    echo ==============================
+                    echo Terraform
+                    echo ==============================
+                    terraform version
+
+                    echo ==============================
+                    echo Ansible
+                    echo ==============================
+                    ansible-playbook --version
+
+                    echo ==============================
+                    echo SSH
+                    echo ==============================
+                    ssh -V
+                '''
             }
         }
-
-
-        /*
-         * ==========================================
-         * TERRAFORM INIT
-         * ==========================================
-         */
 
         stage('Terraform Init') {
             steps {
                 bat '''
                     terraform -chdir=infra init -input=false
+                    if errorlevel 1 exit /b 1
                 '''
             }
         }
-
-
-        /*
-         * ==========================================
-         * TERRAFORM VALIDATE
-         * ==========================================
-         */
 
         stage('Terraform Validate') {
             when {
@@ -98,13 +84,6 @@ pipeline {
                 '''
             }
         }
-        
-
-        /*
-         * ==========================================
-         * TERRAFORM DEPLOY
-         * ==========================================
-         */
 
         stage('Terraform Deploy') {
             when {
@@ -124,17 +103,11 @@ pipeline {
                 ]) {
                     bat '''
                         terraform -chdir=infra apply -auto-approve -input=false
+                        if errorlevel 1 exit /b 1
                     '''
                 }
             }
         }
-
-
-        /*
-         * ==========================================
-         * GET EC2 PUBLIC IP
-         * ==========================================
-         */
 
         stage('Get EC2 Public IP') {
             when {
@@ -151,7 +124,6 @@ pipeline {
                         returnStdout: true
                     ).trim()
 
-                    // Remove possible command echo / whitespace
                     publicIp = publicIp
                         .readLines()
                         .findAll { line ->
@@ -162,22 +134,17 @@ pipeline {
                         .trim()
 
                     env.PUBLIC_IP = publicIp
-                    env.APPLICATION_URL = "http://${env.PUBLIC_IP}"
+                    env.APPLICATION_URL = "http://${publicIp}"
 
-                    echo "EC2 Public IP: ${env.PUBLIC_IP}"
-                    echo "Application URL: ${env.APPLICATION_URL}"
+                    echo "=========================================="
+                    echo "EC2 PUBLIC IP: ${env.PUBLIC_IP}"
+                    echo "APPLICATION URL: ${env.APPLICATION_URL}"
+                    echo "=========================================="
                 }
             }
         }
 
-
-        /*
-         * ==========================================
-         * DEPLOY APPLICATION OVER SSH
-         * ==========================================
-         */
-
-        stage('Deploy Application over SSH') {
+        stage('Deploy Application With Ansible') {
             when {
                 expression {
                     params.ACTION == 'deploy'
@@ -185,16 +152,17 @@ pipeline {
             }
 
             steps {
+
                 withCredentials([
 
                     string(
                         credentialsId: 'chat-mongodb-uri',
-                        variable: 'CHAT_MONGODB_URI'
+                        variable: 'MONGODB_URI'
                     ),
 
                     string(
                         credentialsId: 'chat-jwt-secret',
-                        variable: 'CHAT_JWT_SECRET'
+                        variable: 'JWT_SECRET'
                     ),
 
                     sshUserPrivateKey(
@@ -204,21 +172,48 @@ pipeline {
                     )
 
                 ]) {
-                    bat '''
-                        @echo off
-                        powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts\\deploy-jenkins.ps1
-                        if errorlevel 1 exit /b 1
-                    '''
+
+                    script {
+
+                        /*
+                         * Temporary Ansible inventory
+                         */
+                        writeFile(
+                            file: 'ansible\\jenkins-inventory.ini',
+                            text: """
+[chat]
+${env.PUBLIC_IP} ansible_user=${env.SSH_USERNAME} ansible_ssh_private_key_file=${env.SSH_PRIVATE_KEY}
+"""
+                        )
+
+                        /*
+                         * Temporary Ansible variables
+                         */
+                        writeFile(
+                            file: 'ansible\\jenkins-vars.yml',
+                            text: """
+required_frontend_origin: "${env.APPLICATION_URL}"
+required_mongodb_uri: "${MONGODB_URI}"
+required_jwt_secret: "${JWT_SECRET}"
+"""
+                        )
+
+                        echo "=========================================="
+                        echo "Starting Ansible deployment"
+                        echo "=========================================="
+
+                        bat '''
+                            ansible-playbook ^
+                                -i ansible\\jenkins-inventory.ini ^
+                                ansible\\site.yml ^
+                                -e "@ansible\\jenkins-vars.yml"
+
+                            if errorlevel 1 exit /b 1
+                        '''
+                    }
                 }
             }
         }
-
-
-        /*
-         * ==========================================
-         * VERIFY PUBLIC APPLICATION
-         * ==========================================
-         */
 
         stage('Verify Public Application') {
             when {
@@ -228,41 +223,51 @@ pipeline {
             }
 
             steps {
-                bat '''
-                    echo Checking public application...
+                script {
 
-                    set "RETRY_COUNT=0"
+                    def maxAttempts = 30
+                    def attempt = 0
+                    def success = false
 
-                    :CHECK_APPLICATION
+                    while (attempt < maxAttempts) {
 
-                    curl -fsS "%APPLICATION_URL%/health" > nul 2>&1
+                        echo "Checking ${env.APPLICATION_URL}/health"
 
-                    if not errorlevel 1 (
-                        echo Application is publicly reachable.
-                        exit /b 0
-                    )
+                        def result = bat(
+                            script: """
+                                curl -fsS "${env.APPLICATION_URL}/health" > nul 2>&1
+                            """,
+                            returnStatus: true
+                        )
 
-                    set /a RETRY_COUNT+=1
+                        if (result == 0) {
+                            success = true
 
-                    if %RETRY_COUNT% GEQ 30 (
-                        echo Application did not become reachable.
-                        exit /b 1
-                    )
+                            echo "=========================================="
+                            echo "APPLICATION IS LIVE"
+                            echo "=========================================="
+                            echo "URL: ${env.APPLICATION_URL}"
+                            echo "=========================================="
 
-                    echo Waiting for application...
-                    timeout /t 10 /nobreak > nul
+                            break
+                        }
 
-                    goto CHECK_APPLICATION
-                '''
+                        attempt++
+
+                        echo "Application not ready."
+                        echo "Attempt ${attempt}/${maxAttempts}"
+
+                        bat '''
+                            timeout /t 10 /nobreak > nul
+                        '''
+                    }
+
+                    if (!success) {
+                        error("Application did not become reachable.")
+                    }
+                }
             }
         }
-
-
-        /*
-         * ==========================================
-         * DESTROY INFRASTRUCTURE
-         * ==========================================
-         */
 
         stage('Destroy Infrastructure') {
             when {
@@ -272,6 +277,7 @@ pipeline {
             }
 
             steps {
+
                 withCredentials([
                     [
                         $class: 'AmazonWebServicesCredentialsBinding',
@@ -283,18 +289,13 @@ pipeline {
 
                     bat '''
                         terraform -chdir=infra destroy -auto-approve -input=false
+
+                        if errorlevel 1 exit /b 1
                     '''
                 }
             }
         }
     }
-
-
-    /*
-     * ==========================================
-     * POST ACTIONS
-     * ==========================================
-     */
 
     post {
 
@@ -305,7 +306,7 @@ pipeline {
 
                     echo """
 ==================================================
-CHAT APPLICATION DEPLOYED
+          CHAT APPLICATION DEPLOYED
 ==================================================
 
 Live URL:
@@ -315,13 +316,15 @@ Public IP:
 ${env.PUBLIC_IP}
 
 ==================================================
+Share this URL with users.
+==================================================
 """
 
                 } else {
 
                     echo """
 ==================================================
-ALL TERRAFORM RESOURCES DESTROYED
+       ALL TERRAFORM RESOURCES DESTROYED
 ==================================================
 """
                 }
@@ -329,12 +332,18 @@ ALL TERRAFORM RESOURCES DESTROYED
         }
 
         failure {
-            echo "Pipeline failed."
+            echo """
+==================================================
+              PIPELINE FAILED
+==================================================
+"""
         }
 
         always {
+
             bat '''
-                if exist .deploy.env del /f /q .deploy.env
+                if exist ansible\\jenkins-inventory.ini del /f /q ansible\\jenkins-inventory.ini
+                if exist ansible\\jenkins-vars.yml del /f /q ansible\\jenkins-vars.yml
             '''
         }
     }
