@@ -131,15 +131,15 @@ delete data in an external MongoDB cluster. The command is intentionally
 separate from deployment so the application is not destroyed immediately after
 it starts.
 
-The Jenkins pipeline uses the same Terraform and Ansible flow. Create the
-`chat-mongodb-uri` and `chat-jwt-secret` Jenkins secret-text credentials; the
-pipeline passes them to Ansible for deployment, so a workspace `.env` file is
-not required. Docker is installed and the Compose images are built on the EC2
-host by Ansible; the Jenkins agent does not need Docker Desktop or a running
-Docker daemon. Create the other credential IDs referenced in
-[Jenkinsfile](./Jenkinsfile) before enabling the pipeline, and keep AWS
-authentication in Jenkins' standard AWS credential provider rather than
-committing credentials.
+The Jenkins pipeline provisions with Terraform and deploys over OpenSSH. Create
+the `chat-mongodb-uri` and `chat-jwt-secret` Jenkins secret-text credentials.
+The `chat-ec2-private-key` SSH credential must use the `ubuntu` username.
+Docker and Compose are installed on EC2 by the deployment script; the Windows
+Jenkins agent does not need Ansible, Docker Desktop, or a running Docker daemon.
+The agent does need Terraform, PowerShell, and OpenSSH (`ssh` and `scp`).
+Create the other credential IDs referenced in [Jenkinsfile](./Jenkinsfile)
+before enabling the pipeline, and keep AWS authentication in Jenkins' standard
+AWS credential provider rather than committing credentials.
 
 🏗️ Build and Run the Application
 
@@ -286,7 +286,6 @@ This project is evolving, and here are a few exciting things on the horizon:
 
 
 This project is licensed under the MIT License. See the LICENSE file for more details.
-
 
 
 

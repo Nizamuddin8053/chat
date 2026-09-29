@@ -173,37 +173,11 @@ pipeline {
 
         /*
          * ==========================================
-         * CREATE ANSIBLE INVENTORY
+         * DEPLOY APPLICATION OVER SSH
          * ==========================================
          */
 
-        stage('Create Ansible Inventory') {
-            when {
-                expression {
-                    params.ACTION == 'deploy'
-                }
-            }
-
-            steps {
-                bat '''
-                    (
-                        echo [chat]
-                        echo %PUBLIC_IP% ansible_user=ubuntu
-                    ) > inventory.ini
-
-                    type inventory.ini
-                '''
-            }
-        }
-
-
-        /*
-         * ==========================================
-         * DEPLOY APPLICATION WITH ANSIBLE
-         * ==========================================
-         */
-
-        stage('Deploy Application with Ansible') {
+        stage('Deploy Application over SSH') {
             when {
                 expression {
                     params.ACTION == 'deploy'
@@ -230,13 +204,10 @@ pipeline {
                     )
 
                 ]) {
-
                     bat '''
-                        ansible-playbook ansible/site.yml ^
-                            -i inventory.ini ^
-                            --private-key "%SSH_PRIVATE_KEY%" ^
-                            --extra-vars "required_frontend_origin=http://%PUBLIC_IP% required_mongodb_uri=%CHAT_MONGODB_URI% required_jwt_secret=%CHAT_JWT_SECRET%" ^
-                            --ssh-extra-args "-o StrictHostKeyChecking=no"
+                        @echo off
+                        powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts\\deploy-jenkins.ps1
+                        if errorlevel 1 exit /b 1
                     '''
                 }
             }
@@ -363,7 +334,7 @@ ALL TERRAFORM RESOURCES DESTROYED
 
         always {
             bat '''
-                if exist inventory.ini del /f /q inventory.ini
+                if exist .deploy.env del /f /q .deploy.env
             '''
         }
     }
