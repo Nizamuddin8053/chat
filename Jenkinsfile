@@ -102,42 +102,6 @@ pipeline {
 
         /*
          * ==========================================
-         * BUILD DOCKER IMAGES
-         * ==========================================
-         */
- 
-        stage('Build Docker Images') {
-            when {
-                expression {
-                    params.ACTION == 'deploy'
-                }
-            }
-
-            steps {
-                withCredentials([
-                    string(
-                        credentialsId: 'chat-mongodb-uri',
-                        variable: 'MONGODB_URI'
-                    ),
-                    string(
-                        credentialsId: 'chat-jwt-secret',
-                        variable: 'JWT_SECRET'
-                    )
-                ]) {
-                    bat '''
-                        docker compose config -q
-                        if errorlevel 1 exit /b 1
-
-                        docker compose build
-                        if errorlevel 1 exit /b 1
-                    '''
-                }
-            }
-        }
-
-
-        /*
-         * ==========================================
          * TERRAFORM DEPLOY
          * ==========================================
          */

@@ -133,11 +133,13 @@ it starts.
 
 The Jenkins pipeline uses the same Terraform and Ansible flow. Create the
 `chat-mongodb-uri` and `chat-jwt-secret` Jenkins secret-text credentials; the
-pipeline uses them directly for Compose configuration and deployment, so a
-workspace `.env` file is not required. Create the other credential IDs
-referenced in [Jenkinsfile](./Jenkinsfile) before enabling the pipeline, and
-keep AWS authentication in Jenkins' standard AWS credential provider rather
-than committing credentials.
+pipeline passes them to Ansible for deployment, so a workspace `.env` file is
+not required. Docker is installed and the Compose images are built on the EC2
+host by Ansible; the Jenkins agent does not need Docker Desktop or a running
+Docker daemon. Create the other credential IDs referenced in
+[Jenkinsfile](./Jenkinsfile) before enabling the pipeline, and keep AWS
+authentication in Jenkins' standard AWS credential provider rather than
+committing credentials.
 
 🏗️ Build and Run the Application
 
@@ -284,7 +286,6 @@ This project is evolving, and here are a few exciting things on the horizon:
 
 
 This project is licensed under the MIT License. See the LICENSE file for more details.
-
 
 
 
