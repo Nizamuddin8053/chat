@@ -2,6 +2,7 @@ $ErrorActionPreference = 'Stop'
 
 $environmentFile = Join-Path (Get-Location).Path '.deploy.env'
 $knownHostsFile = Join-Path $env:TEMP ("chat-deploy-known-hosts-" + [guid]::NewGuid().ToString('N'))
+$privateKeyCopy = Join-Path $env:TEMP ("chat-deploy-key-" + [guid]::NewGuid().ToString('N'))
 $utf8WithoutBom = New-Object System.Text.UTF8Encoding($false)
 
 function Invoke-NativeCommand {
@@ -49,6 +50,21 @@ try {
         throw 'The chat-mongodb-uri and chat-jwt-secret Jenkins credentials must not be empty.'
     }
 
+    Copy-Item -LiteralPath $privateKey -Destination $privateKeyCopy
+    $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+    $keyAcl = Get-Acl -LiteralPath $privateKeyCopy
+    $keyAcl.SetAccessRuleProtection($true, $false)
+    foreach ($accessRule in @($keyAcl.Access)) {
+        [void]$keyAcl.RemoveAccessRuleSpecific($accessRule)
+    }
+    $keyRule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+        $identity,
+        [System.Security.AccessControl.FileSystemRights]::FullControl,
+        [System.Security.AccessControl.AccessControlType]::Allow
+    )
+    $keyAcl.AddAccessRule($keyRule)
+    Set-Acl -LiteralPath $privateKeyCopy -AclObject $keyAcl
+
     $frontendOrigin = "http://$publicIp"
     $environmentContent = @"
 MONGODB_URI=$($env:CHAT_MONGODB_URI)
@@ -63,7 +79,7 @@ FRONTEND_PORT=80
 
     $knownHostsOptionPath = $knownHostsFile.Replace('\', '/')
     $sshOptions = @(
-        '-i', $privateKey,
+        '-i', $privateKeyCopy,
         '-o', 'BatchMode=yes',
         '-o', 'StrictHostKeyChecking=accept-new',
         '-o', "UserKnownHostsFile=$knownHostsOptionPath",
@@ -113,5 +129,8 @@ finally {
     }
     if (Test-Path -LiteralPath $knownHostsFile) {
         Remove-Item -LiteralPath $knownHostsFile -Force
+    }
+    if (Test-Path -LiteralPath $privateKeyCopy) {
+        Remove-Item -LiteralPath $privateKeyCopy -Force
     }
 }

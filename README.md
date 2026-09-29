@@ -138,7 +138,9 @@ Docker and Compose are installed on EC2 by the deployment script; the Windows
 Jenkins agent does not need Ansible, Docker Desktop, or a running Docker daemon.
 The agent does need Terraform, PowerShell, and OpenSSH (`ssh` and `scp`).
 SSH host keys are accepted for the current deployment only and stored in a
-temporary known-hosts file that is removed afterward.
+temporary known-hosts file that is removed afterward. The pipeline also makes
+a temporary SSH-key copy with permissions restricted to the Jenkins account,
+then deletes it after deployment.
 Create the other credential IDs referenced in [Jenkinsfile](./Jenkinsfile)
 before enabling the pipeline, and keep AWS authentication in Jenkins' standard
 AWS credential provider rather than committing credentials.
@@ -288,7 +290,6 @@ This project is evolving, and here are a few exciting things on the horizon:
 
 
 This project is licensed under the MIT License. See the LICENSE file for more details.
-
 
 
 
