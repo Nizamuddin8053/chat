@@ -1,3 +1,4 @@
+```groovy
 pipeline {
     agent any
 
@@ -19,8 +20,6 @@ pipeline {
     }
 
     environment {
-        PATH = "C:\\Users\\acer\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Hashicorp.Terraform_Microsoft.Winget.Source_8wekyb3d8bbwe;${env.PATH}"
-
         TF_IN_AUTOMATION = 'true'
         TF_VAR_aws_region = 'ap-south-1'
 
@@ -37,33 +36,44 @@ pipeline {
             }
         }
 
-        stage('Check Terraform') {
+        stage('Check Tools') {
             steps {
-                bat '''
-                    echo ==============================
-                    echo Terraform
-                    echo ==============================
+                sh '''
+                    set -e
+
+                    echo "=============================="
+                    echo "Terraform"
+                    echo "=============================="
                     terraform version
 
-                    echo ==============================
-                    echo Ansible
-                    echo ==============================
+                    echo "=============================="
+                    echo "Ansible"
+                    echo "=============================="
                     ansible-playbook --version
 
-                    echo ==============================
-                    echo SSH
-                    echo ==============================
+                    echo "=============================="
+                    echo "SSH"
+                    echo "=============================="
                     ssh -V
+
+                    echo "=============================="
+                    echo "AWS CLI"
+                    echo "=============================="
+                    aws --version
+
+                    echo "=============================="
+                    echo "Docker"
+                    echo "=============================="
+                    docker --version
                 '''
             }
         }
 
-
         stage('Terraform Init') {
             steps {
-                bat '''
+                sh '''
+                    set -e
                     terraform -chdir=infra init -input=false
-                    if errorlevel 1 exit /b 1
                 '''
             }
         }
@@ -76,12 +86,11 @@ pipeline {
             }
 
             steps {
-                bat '''
-                    terraform -chdir=infra fmt -check
-                    if errorlevel 1 exit /b 1
+                sh '''
+                    set -e
 
+                    terraform -chdir=infra fmt -check
                     terraform -chdir=infra validate
-                    if errorlevel 1 exit /b 1
                 '''
             }
         }
@@ -102,9 +111,12 @@ pipeline {
                         secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
                     ]
                 ]) {
-                    bat '''
-                        terraform -chdir=infra apply -auto-approve -input=false
-                        if errorlevel 1 exit /b 1
+                    sh '''
+                        set -e
+
+                        terraform -chdir=infra apply \
+                            -auto-approve \
+                            -input=false
                     '''
                 }
             }
@@ -120,19 +132,14 @@ pipeline {
             steps {
                 script {
 
-                    def publicIp = bat(
+                    def publicIp = sh(
                         script: 'terraform -chdir=infra output -raw public_ip',
                         returnStdout: true
                     ).trim()
 
-                    publicIp = publicIp
-                        .readLines()
-                        .findAll { line ->
-                            line?.trim() &&
-                            !line.contains('terraform -chdir')
-                        }
-                        .last()
-                        .trim()
+                    if (!publicIp) {
+                        error("Terraform did not return a public IP.")
+                    }
 
                     env.PUBLIC_IP = publicIp
                     env.APPLICATION_URL = "http://${publicIp}"
@@ -177,33 +184,33 @@ pipeline {
                     script {
 
                         writeFile(
-                            file: 'ansible\\jenkins-inventory.ini',
+                            file: 'ansible/jenkins-inventory.ini',
                             text: """
-        [chat]
-        ${env.PUBLIC_IP} ansible_user=${env.SSH_USERNAME} ansible_ssh_private_key_file=${env.SSH_PRIVATE_KEY}
-        """
+[chat]
+${env.PUBLIC_IP} ansible_user=${env.SSH_USERNAME} ansible_ssh_private_key_file=${env.SSH_PRIVATE_KEY} ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+"""
                         )
 
                         writeFile(
-                            file: 'ansible\\jenkins-vars.yml',
+                            file: 'ansible/jenkins-vars.yml',
                             text: """
-        required_frontend_origin: "${env.APPLICATION_URL}"
-        required_mongodb_uri: "${MONGODB_URI}"
-        required_jwt_secret: "${JWT_SECRET}"
-        """
+required_frontend_origin: "${env.APPLICATION_URL}"
+required_mongodb_uri: "${MONGODB_URI}"
+required_jwt_secret: "${JWT_SECRET}"
+"""
                         )
 
                         echo "=========================================="
                         echo "Starting Ansible deployment"
                         echo "=========================================="
 
-                        bat '''
-                            wsl ansible-playbook ^
-                                -i ansible/jenkins-inventory.ini ^
-                                ansible/site.yml ^
-                                -e "@ansible/jenkins-vars.yml"
+                        sh '''
+                            set -e
 
-                            if errorlevel 1 exit /b 1
+                            ansible-playbook \
+                                -i ansible/jenkins-inventory.ini \
+                                ansible/site.yml \
+                                -e "@ansible/jenkins-vars.yml"
                         '''
                     }
                 }
@@ -218,6 +225,7 @@ pipeline {
             }
 
             steps {
+
                 script {
 
                     def maxAttempts = 30
@@ -228,14 +236,16 @@ pipeline {
 
                         echo "Checking ${env.APPLICATION_URL}/health"
 
-                        def result = bat(
+                        def result = sh(
                             script: """
-                                curl -fsS "${env.APPLICATION_URL}/health" > nul 2>&1
+                                curl -fsS "${env.APPLICATION_URL}/health" \
+                                > /dev/null 2>&1
                             """,
                             returnStatus: true
                         )
 
                         if (result == 0) {
+
                             success = true
 
                             echo "=========================================="
@@ -252,9 +262,7 @@ pipeline {
                         echo "Application not ready."
                         echo "Attempt ${attempt}/${maxAttempts}"
 
-                        bat '''
-                            timeout /t 10 /nobreak > nul
-                        '''
+                        sleep 10
                     }
 
                     if (!success) {
@@ -282,10 +290,12 @@ pipeline {
                     ]
                 ]) {
 
-                    bat '''
-                        terraform -chdir=infra destroy -auto-approve -input=false
+                    sh '''
+                        set -e
 
-                        if errorlevel 1 exit /b 1
+                        terraform -chdir=infra destroy \
+                            -auto-approve \
+                            -input=false
                     '''
                 }
             }
@@ -327,6 +337,7 @@ Share this URL with users.
         }
 
         failure {
+
             echo """
 ==================================================
               PIPELINE FAILED
@@ -336,10 +347,11 @@ Share this URL with users.
 
         always {
 
-            bat '''
-                if exist ansible\\jenkins-inventory.ini del /f /q ansible\\jenkins-inventory.ini
-                if exist ansible\\jenkins-vars.yml del /f /q ansible\\jenkins-vars.yml
+            sh '''
+                rm -f ansible/jenkins-inventory.ini || true
+                rm -f ansible/jenkins-vars.yml || true
             '''
         }
     }
 }
+```
