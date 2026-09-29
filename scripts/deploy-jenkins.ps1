@@ -1,7 +1,19 @@
 $ErrorActionPreference = 'Stop'
 
 $environmentFile = Join-Path (Get-Location).Path '.deploy.env'
+$knownHostsFile = Join-Path $env:TEMP ("chat-deploy-known-hosts-" + [guid]::NewGuid().ToString('N'))
 $utf8WithoutBom = New-Object System.Text.UTF8Encoding($false)
+
+function Invoke-NativeCommand {
+    param(
+        [Parameter(Mandatory = $true)][string]$Executable,
+        [Parameter(Mandatory = $true)][string[]]$Arguments
+    )
+
+    $ErrorActionPreference = 'Continue'
+    & $Executable @Arguments
+    return $LASTEXITCODE
+}
 
 function Invoke-CheckedCommand {
     param(
@@ -10,9 +22,9 @@ function Invoke-CheckedCommand {
         [Parameter(Mandatory = $true)][string]$FailureMessage
     )
 
-    & $Executable @Arguments
-    if ($LASTEXITCODE -ne 0) {
-        throw "$FailureMessage (exit code $LASTEXITCODE)."
+    $exitCode = Invoke-NativeCommand -Executable $Executable -Arguments $Arguments
+    if ($exitCode -ne 0) {
+        throw "$FailureMessage (exit code $exitCode)."
     }
 }
 
@@ -47,20 +59,26 @@ FRONTEND_ORIGIN=$frontendOrigin
 FRONTEND_PORT=80
 "@
     [System.IO.File]::WriteAllText($environmentFile, $environmentContent, $utf8WithoutBom)
+    [System.IO.File]::WriteAllText($knownHostsFile, '', $utf8WithoutBom)
 
+    $knownHostsOptionPath = $knownHostsFile.Replace('\', '/')
     $sshOptions = @(
         '-i', $privateKey,
         '-o', 'BatchMode=yes',
-        '-o', 'StrictHostKeyChecking=no',
-        '-o', 'UserKnownHostsFile=NUL',
+        '-o', 'StrictHostKeyChecking=accept-new',
+        '-o', "UserKnownHostsFile=$knownHostsOptionPath",
+        '-o', 'LogLevel=ERROR',
         '-o', 'ConnectTimeout=10'
     )
     $hostAddress = "$username@$publicIp"
     $connected = $false
 
     for ($attempt = 1; $attempt -le 30; $attempt++) {
-        & ssh @sshOptions $hostAddress 'exit' *> $null
-        if ($LASTEXITCODE -eq 0) {
+        $exitCode = Invoke-NativeCommand -Executable 'ssh' -Arguments ($sshOptions + @(
+            $hostAddress,
+            'exit'
+        ))
+        if ($exitCode -eq 0) {
             $connected = $true
             break
         }
@@ -92,5 +110,8 @@ catch {
 finally {
     if (Test-Path -LiteralPath $environmentFile) {
         Remove-Item -LiteralPath $environmentFile -Force
+    }
+    if (Test-Path -LiteralPath $knownHostsFile) {
+        Remove-Item -LiteralPath $knownHostsFile -Force
     }
 }
