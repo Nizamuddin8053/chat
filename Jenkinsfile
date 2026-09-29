@@ -37,7 +37,7 @@ pipeline {
             }
         }
 
-        stage('Check Tools') {
+        stage('Check Terraform') {
             steps {
                 bat '''
                     echo ==============================
@@ -54,6 +54,19 @@ pipeline {
                     echo SSH
                     echo ==============================
                     ssh -V
+                '''
+            }
+        }
+
+
+        stage('Check Ansible') {
+            steps {
+                bat '''
+                    echo ===== ANSIBLE =====
+                    where ansible
+                    where ansible-playbook
+                    ansible --version
+                    ansible-playbook --version
                 '''
             }
         }
