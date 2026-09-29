@@ -98,14 +98,38 @@ pipeline {
                 '''
             }
         }
+        
 
+        /*
+         * ======================================
+         * Create Environment variable
+         * ======================================
+        */
+
+        stage('Create Environment File') {
+            steps {
+              withCredentials([
+                string(credentialsId: 'mongodb-uri', variable: 'MONGODB_URI'),
+                string(credentialsId: 'jwt-secret', variable: 'JWT_SECRET'),
+            	string(credentialsId: 'frontend-origin', variable: 'FRONTEND_ORIGIN')
+              ]) {
+                bat '''
+                  (
+                      echo MONGODB_URI=%MONGODB_URI%
+                      echo JWT_SECRET=%JWT_SECRET%
+                      echo FRONTEND_ORIGIN=%FRONTEND_ORIGIN%
+                  ) > .env
+                '''
+              }
+            }
+        }
 
         /*
          * ==========================================
          * BUILD DOCKER IMAGES
          * ==========================================
          */
-
+ 
         stage('Build Docker Images') {
             when {
                 expression {

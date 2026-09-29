@@ -10,8 +10,12 @@ services:
     env_file:
       - .env
 
-    expose:
-      - "5001"
+    ports:
+      - "5001:5001"
+
+    environment:
+      PORT: 5001
+      NODE_ENV: production
 
     restart: unless-stopped
 
