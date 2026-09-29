@@ -59,18 +59,6 @@ pipeline {
         }
 
 
-        stage('Check Ansible') {
-            steps {
-                bat '''
-                    echo ===== ANSIBLE =====
-                    where ansible
-                    where ansible-playbook
-                    ansible --version
-                    ansible-playbook --version
-                '''
-            }
-        }
-
         stage('Terraform Init') {
             steps {
                 bat '''
@@ -188,27 +176,21 @@ pipeline {
 
                     script {
 
-                        /*
-                         * Temporary Ansible inventory
-                         */
                         writeFile(
                             file: 'ansible\\jenkins-inventory.ini',
                             text: """
-[chat]
-${env.PUBLIC_IP} ansible_user=${env.SSH_USERNAME} ansible_ssh_private_key_file=${env.SSH_PRIVATE_KEY}
-"""
+        [chat]
+        ${env.PUBLIC_IP} ansible_user=${env.SSH_USERNAME} ansible_ssh_private_key_file=${env.SSH_PRIVATE_KEY}
+        """
                         )
 
-                        /*
-                         * Temporary Ansible variables
-                         */
                         writeFile(
                             file: 'ansible\\jenkins-vars.yml',
                             text: """
-required_frontend_origin: "${env.APPLICATION_URL}"
-required_mongodb_uri: "${MONGODB_URI}"
-required_jwt_secret: "${JWT_SECRET}"
-"""
+        required_frontend_origin: "${env.APPLICATION_URL}"
+        required_mongodb_uri: "${MONGODB_URI}"
+        required_jwt_secret: "${JWT_SECRET}"
+        """
                         )
 
                         echo "=========================================="
@@ -216,10 +198,10 @@ required_jwt_secret: "${JWT_SECRET}"
                         echo "=========================================="
 
                         bat '''
-                            ansible-playbook ^
-                                -i ansible\\jenkins-inventory.ini ^
-                                ansible\\site.yml ^
-                                -e "@ansible\\jenkins-vars.yml"
+                            wsl ansible-playbook ^
+                                -i ansible/jenkins-inventory.ini ^
+                                ansible/site.yml ^
+                                -e "@ansible/jenkins-vars.yml"
 
                             if errorlevel 1 exit /b 1
                         '''
