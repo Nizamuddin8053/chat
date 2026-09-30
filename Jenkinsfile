@@ -121,18 +121,17 @@ pipeline {
                         secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
                     ]
                 ]) {
-
                     sh '''
                         set -e
 
                         echo "=========================================="
-                        echo "CLEANING PREVIOUS CHAT INFRASTRUCTURE"
+                        echo "CLEANING PREVIOUS CHAT RESOURCES"
                         echo "=========================================="
 
 
-                        # ------------------------------------------------
-                        # 1. Find old chat-app EC2 instances
-                        # ------------------------------------------------
+                        # -------------------------------
+                        # Find old EC2
+                        # -------------------------------
 
                         INSTANCE_IDS=$(aws ec2 describe-instances \
                             --filters \
@@ -143,10 +142,7 @@ pipeline {
 
                         if [ -n "$INSTANCE_IDS" ] && [ "$INSTANCE_IDS" != "None" ]; then
 
-                            echo "Old chat-app EC2 instance(s) found:"
-                            echo "$INSTANCE_IDS"
-
-                            echo "Terminating old EC2 instance(s)..."
+                            echo "Old EC2 found: $INSTANCE_IDS"
 
                             aws ec2 terminate-instances \
                                 --instance-ids $INSTANCE_IDS
@@ -156,18 +152,16 @@ pipeline {
                             aws ec2 wait instance-terminated \
                                 --instance-ids $INSTANCE_IDS
 
-                            echo "Old EC2 instance(s) terminated."
+                            echo "EC2 termination completed."
 
                         else
-
-                            echo "No old chat-app EC2 instance found."
-
+                            echo "No old chat-app EC2 found."
                         fi
 
 
-                        # ------------------------------------------------
-                        # 2. Find old Security Group
-                        # ------------------------------------------------
+                        # -------------------------------
+                        # Delete Security Group
+                        # -------------------------------
 
                         DEFAULT_VPC=$(aws ec2 describe-vpcs \
                             --filters Name=is-default,Values=true \
@@ -189,23 +183,33 @@ pipeline {
 
                             echo "Old Security Group found: $SG_ID"
 
-                            echo "Deleting old Security Group..."
+                            for i in $(seq 1 12); do
 
-                            aws ec2 delete-security-group \
-                                --group-id "$SG_ID"
+                                if aws ec2 delete-security-group \
+                                    --group-id "$SG_ID" 2>/dev/null; then
 
-                            echo "Old Security Group deleted."
+                                    echo "Security Group deleted."
+                                    break
+
+                                fi
+
+                                if [ "$i" -eq 12 ]; then
+                                    echo "Could not delete Security Group."
+                                    exit 1
+                                fi
+
+                                echo "Security Group still in use. Retry $i/12"
+                                sleep 5
+                            done
 
                         else
-
-                            echo "No old chat-app Security Group found."
-
+                            echo "No old Security Group found."
                         fi
 
 
-                        # ------------------------------------------------
-                        # 3. Find old Key Pair
-                        # ------------------------------------------------
+                        # -------------------------------
+                        # Delete Key Pair
+                        # -------------------------------
 
                         KEY_EXISTS=$(aws ec2 describe-key-pairs \
                             --key-names chat-app-deploy \
@@ -215,24 +219,20 @@ pipeline {
 
                         if [ "$KEY_EXISTS" = "chat-app-deploy" ]; then
 
-                            echo "Old Key Pair found: chat-app-deploy"
-
                             echo "Deleting old Key Pair..."
 
                             aws ec2 delete-key-pair \
                                 --key-name chat-app-deploy
 
-                            echo "Old Key Pair deleted."
+                            echo "Key Pair deleted."
 
                         else
-
                             echo "No old Key Pair found."
-
                         fi
 
 
                         echo "=========================================="
-                        echo "OLD RESOURCE CLEANUP COMPLETED"
+                        echo "CLEANUP COMPLETED"
                         echo "=========================================="
                     '''
                 }
