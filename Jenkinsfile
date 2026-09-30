@@ -1,4 +1,3 @@
-
 pipeline {
     agent any
 
@@ -9,7 +8,7 @@ pipeline {
     options {
         disableConcurrentBuilds(abortPrevious: true)
         timestamps()
-        timeout(time: 30, unit: 'MINUTES')
+        timeout(time: 40, unit: 'MINUTES')
     }
 
     parameters {
@@ -31,11 +30,20 @@ pipeline {
 
     stages {
 
+        // ============================================================
+        // CHECKOUT
+        // ============================================================
+
         stage('Checkout') {
             steps {
                 checkout scm
             }
         }
+
+
+        // ============================================================
+        // CHECK TOOLS
+        // ============================================================
 
         stage('Check Tools') {
             steps {
@@ -75,6 +83,11 @@ pipeline {
             }
         }
 
+
+        // ============================================================
+        // TERRAFORM INIT
+        // ============================================================
+
         stage('Terraform Init') {
             steps {
                 sh '''
@@ -86,6 +99,150 @@ pipeline {
                 '''
             }
         }
+
+
+        // ============================================================
+        // CLEAN OLD AWS RESOURCES
+        // ============================================================
+
+        stage('Clean Previous AWS Resources') {
+            when {
+                expression {
+                    params.ACTION == 'deploy'
+                }
+            }
+
+            steps {
+                withCredentials([
+                    [
+                        $class: 'AmazonWebServicesCredentialsBinding',
+                        credentialsId: 'chat-aws',
+                        accessKeyVariable: 'AWS_ACCESS_KEY_ID',
+                        secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
+                    ]
+                ]) {
+
+                    sh '''
+                        set -e
+
+                        echo "=========================================="
+                        echo "CLEANING PREVIOUS CHAT INFRASTRUCTURE"
+                        echo "=========================================="
+
+
+                        # ------------------------------------------------
+                        # 1. Find old chat-app EC2 instances
+                        # ------------------------------------------------
+
+                        INSTANCE_IDS=$(aws ec2 describe-instances \
+                            --filters \
+                            Name=tag:Name,Values=chat-app \
+                            Name=instance-state-name,Values=pending,running,stopping,stopped \
+                            --query 'Reservations[].Instances[].InstanceId' \
+                            --output text)
+
+                        if [ -n "$INSTANCE_IDS" ] && [ "$INSTANCE_IDS" != "None" ]; then
+
+                            echo "Old chat-app EC2 instance(s) found:"
+                            echo "$INSTANCE_IDS"
+
+                            echo "Terminating old EC2 instance(s)..."
+
+                            aws ec2 terminate-instances \
+                                --instance-ids $INSTANCE_IDS
+
+                            echo "Waiting for EC2 termination..."
+
+                            aws ec2 wait instance-terminated \
+                                --instance-ids $INSTANCE_IDS
+
+                            echo "Old EC2 instance(s) terminated."
+
+                        else
+
+                            echo "No old chat-app EC2 instance found."
+
+                        fi
+
+
+                        # ------------------------------------------------
+                        # 2. Find old Security Group
+                        # ------------------------------------------------
+
+                        DEFAULT_VPC=$(aws ec2 describe-vpcs \
+                            --filters Name=is-default,Values=true \
+                            --query 'Vpcs[0].VpcId' \
+                            --output text)
+
+                        echo "Default VPC: $DEFAULT_VPC"
+
+
+                        SG_ID=$(aws ec2 describe-security-groups \
+                            --filters \
+                            Name=group-name,Values=chat-app-sg \
+                            Name=vpc-id,Values=$DEFAULT_VPC \
+                            --query 'SecurityGroups[0].GroupId' \
+                            --output text 2>/dev/null || true)
+
+
+                        if [ -n "$SG_ID" ] && [ "$SG_ID" != "None" ]; then
+
+                            echo "Old Security Group found: $SG_ID"
+
+                            echo "Deleting old Security Group..."
+
+                            aws ec2 delete-security-group \
+                                --group-id "$SG_ID"
+
+                            echo "Old Security Group deleted."
+
+                        else
+
+                            echo "No old chat-app Security Group found."
+
+                        fi
+
+
+                        # ------------------------------------------------
+                        # 3. Find old Key Pair
+                        # ------------------------------------------------
+
+                        KEY_EXISTS=$(aws ec2 describe-key-pairs \
+                            --key-names chat-app-deploy \
+                            --query 'KeyPairs[0].KeyName' \
+                            --output text 2>/dev/null || true)
+
+
+                        if [ "$KEY_EXISTS" = "chat-app-deploy" ]; then
+
+                            echo "Old Key Pair found: chat-app-deploy"
+
+                            echo "Deleting old Key Pair..."
+
+                            aws ec2 delete-key-pair \
+                                --key-name chat-app-deploy
+
+                            echo "Old Key Pair deleted."
+
+                        else
+
+                            echo "No old Key Pair found."
+
+                        fi
+
+
+                        echo "=========================================="
+                        echo "OLD RESOURCE CLEANUP COMPLETED"
+                        echo "=========================================="
+                    '''
+                }
+            }
+        }
+
+
+        // ============================================================
+        // TERRAFORM VALIDATE
+        // ============================================================
 
         stage('Terraform Validate') {
             when {
@@ -104,6 +261,11 @@ pipeline {
             }
         }
 
+
+        // ============================================================
+        // TERRAFORM DEPLOY
+        // ============================================================
+
         stage('Terraform Deploy') {
             when {
                 expression {
@@ -120,21 +282,31 @@ pipeline {
                         secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
                     ]
                 ]) {
+
                     sh '''
                         set -e
 
-                        echo "Starting Terraform deployment..."
+                        echo "=========================================="
+                        echo "STARTING TERRAFORM DEPLOYMENT"
+                        echo "=========================================="
 
                         terraform -chdir=infra apply \
                             -auto-approve \
                             -input=false \
                             -no-color
 
-                        echo "Terraform deployment completed."
+                        echo "=========================================="
+                        echo "TERRAFORM DEPLOYMENT COMPLETED"
+                        echo "=========================================="
                     '''
                 }
             }
         }
+
+
+        // ============================================================
+        // GET EC2 PUBLIC IP
+        // ============================================================
 
         stage('Get EC2 Public IP') {
             when {
@@ -166,6 +338,11 @@ pipeline {
             }
         }
 
+
+        // ============================================================
+        // WAIT FOR SSH
+        // ============================================================
+
         stage('Wait For SSH') {
             when {
                 expression {
@@ -181,37 +358,50 @@ pipeline {
                         usernameVariable: 'SSH_USERNAME'
                     )
                 ]) {
+
                     sh '''
                         set -e
 
-                        echo "Waiting for EC2 SSH..."
+                        echo "=========================================="
+                        echo "WAITING FOR EC2 SSH"
+                        echo "=========================================="
 
                         for i in $(seq 1 30); do
 
                             if ssh \
                                 -i "$SSH_PRIVATE_KEY" \
                                 -o StrictHostKeyChecking=no \
+                                -o UserKnownHostsFile=/dev/null \
                                 -o ConnectTimeout=5 \
                                 -o ConnectionAttempts=1 \
                                 "$SSH_USERNAME@$PUBLIC_IP" \
                                 "echo SSH_READY" 2>/dev/null
                             then
+
                                 echo "=========================================="
                                 echo "SSH CONNECTION READY"
                                 echo "=========================================="
+
                                 exit 0
                             fi
 
                             echo "SSH not ready. Attempt $i/30"
+
                             sleep 10
                         done
 
                         echo "EC2 SSH did not become ready."
+
                         exit 1
                     '''
                 }
             }
         }
+
+
+        // ============================================================
+        // DEPLOY APPLICATION WITH ANSIBLE
+        // ============================================================
 
         stage('Deploy Application With Ansible') {
             when {
@@ -248,9 +438,10 @@ pipeline {
                             file: 'ansible/jenkins-inventory.ini',
                             text: """
 [chat]
-${env.PUBLIC_IP} ansible_user=${env.SSH_USERNAME} ansible_ssh_private_key_file=${env.SSH_PRIVATE_KEY} ansible_ssh_common_args='-o StrictHostKeyChecking=no -o ConnectTimeout=10'
+${env.PUBLIC_IP} ansible_user=${env.SSH_USERNAME} ansible_ssh_private_key_file=${env.SSH_PRIVATE_KEY} ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10'
 """
                         )
+
 
                         writeFile(
                             file: 'ansible/jenkins-vars.yml',
@@ -261,9 +452,11 @@ required_jwt_secret: "${JWT_SECRET}"
 """
                         )
 
+
                         echo "=========================================="
-                        echo "Starting Ansible deployment"
+                        echo "STARTING ANSIBLE DEPLOYMENT"
                         echo "=========================================="
+
 
                         sh '''
                             set -e
@@ -276,13 +469,18 @@ required_jwt_secret: "${JWT_SECRET}"
                                 -vv
 
                             echo "=========================================="
-                            echo "Ansible deployment completed"
+                            echo "ANSIBLE DEPLOYMENT COMPLETED"
                             echo "=========================================="
                         '''
                     }
                 }
             }
         }
+
+
+        // ============================================================
+        // VERIFY APPLICATION
+        // ============================================================
 
         stage('Verify Public Application') {
             when {
@@ -295,16 +493,21 @@ required_jwt_secret: "${JWT_SECRET}"
 
                 script {
 
-                    def maxAttempts = 12
+                    def maxAttempts = 18
                     def attempt = 0
                     def success = false
+
 
                     while (attempt < maxAttempts) {
 
                         attempt++
 
+
+                        echo "=========================================="
                         echo "Checking ${env.APPLICATION_URL}/health"
                         echo "Attempt ${attempt}/${maxAttempts}"
+                        echo "=========================================="
+
 
                         def result = sh(
                             script: """
@@ -318,6 +521,7 @@ required_jwt_secret: "${JWT_SECRET}"
                             returnStatus: true
                         )
 
+
                         if (result == 0) {
 
                             success = true
@@ -325,19 +529,26 @@ required_jwt_secret: "${JWT_SECRET}"
                             echo "=========================================="
                             echo "APPLICATION IS LIVE"
                             echo "=========================================="
+
                             echo "URL: ${env.APPLICATION_URL}"
+
                             echo "=========================================="
 
                             break
                         }
 
+
                         if (attempt < maxAttempts) {
-                            echo "Application not ready. Waiting 10 seconds..."
+
+                            echo "Application not ready."
+
                             sleep 10
                         }
                     }
 
+
                     if (!success) {
+
                         error(
                             "Application did not become reachable at ${env.APPLICATION_URL}/health"
                         )
@@ -345,6 +556,11 @@ required_jwt_secret: "${JWT_SECRET}"
                 }
             }
         }
+
+
+        // ============================================================
+        // DESTROY
+        // ============================================================
 
         stage('Destroy Infrastructure') {
             when {
@@ -368,16 +584,18 @@ required_jwt_secret: "${JWT_SECRET}"
                         set -e
 
                         echo "=========================================="
-                        echo "Destroying Terraform infrastructure"
+                        echo "DESTROYING TERRAFORM INFRASTRUCTURE"
                         echo "=========================================="
+
 
                         terraform -chdir=infra destroy \
                             -auto-approve \
                             -input=false \
                             -no-color
 
+
                         echo "=========================================="
-                        echo "Infrastructure destroyed"
+                        echo "TERRAFORM INFRASTRUCTURE DESTROYED"
                         echo "=========================================="
                     '''
                 }
@@ -385,9 +603,15 @@ required_jwt_secret: "${JWT_SECRET}"
         }
     }
 
+
+    // ================================================================
+    // POST ACTIONS
+    // ================================================================
+
     post {
 
         success {
+
             script {
 
                 if (params.ACTION == 'deploy') {
@@ -410,12 +634,13 @@ ${env.PUBLIC_IP}
 
                     echo """
 ==================================================
-       ALL TERRAFORM RESOURCES DESTROYED
+       TERRAFORM INFRASTRUCTURE DESTROYED
 ==================================================
 """
                 }
             }
         }
+
 
         failure {
 
@@ -423,10 +648,13 @@ ${env.PUBLIC_IP}
 ==================================================
               PIPELINE FAILED
 ==================================================
-Check the stage above for the exact failure.
+
+Check the failed stage above for the exact error.
+
 ==================================================
 """
         }
+
 
         always {
 
@@ -437,4 +665,3 @@ Check the stage above for the exact failure.
         }
     }
 }
-
