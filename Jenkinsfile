@@ -7,8 +7,9 @@ pipeline {
     }
 
     options {
-        disableConcurrentBuilds()
+        disableConcurrentBuilds(abortPrevious: true)
         timestamps()
+        timeout(time: 30, unit: 'MINUTES')
     }
 
     parameters {
@@ -65,6 +66,11 @@ pipeline {
                     echo "Docker"
                     echo "=============================="
                     docker --version
+
+                    echo "=============================="
+                    echo "Curl"
+                    echo "=============================="
+                    curl --version | head -n 1
                 '''
             }
         }
@@ -73,7 +79,10 @@ pipeline {
             steps {
                 sh '''
                     set -e
-                    terraform -chdir=infra init -input=false
+
+                    terraform -chdir=infra init \
+                        -input=false \
+                        -no-color
                 '''
             }
         }
@@ -114,9 +123,14 @@ pipeline {
                     sh '''
                         set -e
 
+                        echo "Starting Terraform deployment..."
+
                         terraform -chdir=infra apply \
                             -auto-approve \
-                            -input=false
+                            -input=false \
+                            -no-color
+
+                        echo "Terraform deployment completed."
                     '''
                 }
             }
@@ -148,6 +162,53 @@ pipeline {
                     echo "EC2 PUBLIC IP: ${env.PUBLIC_IP}"
                     echo "APPLICATION URL: ${env.APPLICATION_URL}"
                     echo "=========================================="
+                }
+            }
+        }
+
+        stage('Wait For SSH') {
+            when {
+                expression {
+                    params.ACTION == 'deploy'
+                }
+            }
+
+            steps {
+                withCredentials([
+                    sshUserPrivateKey(
+                        credentialsId: 'chat-ec2-private-key',
+                        keyFileVariable: 'SSH_PRIVATE_KEY',
+                        usernameVariable: 'SSH_USERNAME'
+                    )
+                ]) {
+                    sh '''
+                        set -e
+
+                        echo "Waiting for EC2 SSH..."
+
+                        for i in $(seq 1 30); do
+
+                            if ssh \
+                                -i "$SSH_PRIVATE_KEY" \
+                                -o StrictHostKeyChecking=no \
+                                -o ConnectTimeout=5 \
+                                -o ConnectionAttempts=1 \
+                                "$SSH_USERNAME@$PUBLIC_IP" \
+                                "echo SSH_READY" 2>/dev/null
+                            then
+                                echo "=========================================="
+                                echo "SSH CONNECTION READY"
+                                echo "=========================================="
+                                exit 0
+                            fi
+
+                            echo "SSH not ready. Attempt $i/30"
+                            sleep 10
+                        done
+
+                        echo "EC2 SSH did not become ready."
+                        exit 1
+                    '''
                 }
             }
         }
@@ -187,7 +248,7 @@ pipeline {
                             file: 'ansible/jenkins-inventory.ini',
                             text: """
 [chat]
-${env.PUBLIC_IP} ansible_user=${env.SSH_USERNAME} ansible_ssh_private_key_file=${env.SSH_PRIVATE_KEY} ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+${env.PUBLIC_IP} ansible_user=${env.SSH_USERNAME} ansible_ssh_private_key_file=${env.SSH_PRIVATE_KEY} ansible_ssh_common_args='-o StrictHostKeyChecking=no -o ConnectTimeout=10'
 """
                         )
 
@@ -210,7 +271,13 @@ required_jwt_secret: "${JWT_SECRET}"
                             ansible-playbook \
                                 -i ansible/jenkins-inventory.ini \
                                 ansible/site.yml \
-                                -e "@ansible/jenkins-vars.yml"
+                                -e "@ansible/jenkins-vars.yml" \
+                                -T 30 \
+                                -vv
+
+                            echo "=========================================="
+                            echo "Ansible deployment completed"
+                            echo "=========================================="
                         '''
                     }
                 }
@@ -228,18 +295,25 @@ required_jwt_secret: "${JWT_SECRET}"
 
                 script {
 
-                    def maxAttempts = 30
+                    def maxAttempts = 12
                     def attempt = 0
                     def success = false
 
                     while (attempt < maxAttempts) {
 
+                        attempt++
+
                         echo "Checking ${env.APPLICATION_URL}/health"
+                        echo "Attempt ${attempt}/${maxAttempts}"
 
                         def result = sh(
                             script: """
-                                curl -fsS "${env.APPLICATION_URL}/health" \
-                                > /dev/null 2>&1
+                                curl \
+                                    --connect-timeout 5 \
+                                    --max-time 10 \
+                                    -fsS \
+                                    "${env.APPLICATION_URL}/health" \
+                                    > /dev/null 2>&1
                             """,
                             returnStatus: true
                         )
@@ -257,16 +331,16 @@ required_jwt_secret: "${JWT_SECRET}"
                             break
                         }
 
-                        attempt++
-
-                        echo "Application not ready."
-                        echo "Attempt ${attempt}/${maxAttempts}"
-
-                        sleep 10
+                        if (attempt < maxAttempts) {
+                            echo "Application not ready. Waiting 10 seconds..."
+                            sleep 10
+                        }
                     }
 
                     if (!success) {
-                        error("Application did not become reachable.")
+                        error(
+                            "Application did not become reachable at ${env.APPLICATION_URL}/health"
+                        )
                     }
                 }
             }
@@ -293,9 +367,18 @@ required_jwt_secret: "${JWT_SECRET}"
                     sh '''
                         set -e
 
+                        echo "=========================================="
+                        echo "Destroying Terraform infrastructure"
+                        echo "=========================================="
+
                         terraform -chdir=infra destroy \
                             -auto-approve \
-                            -input=false
+                            -input=false \
+                            -no-color
+
+                        echo "=========================================="
+                        echo "Infrastructure destroyed"
+                        echo "=========================================="
                     '''
                 }
             }
@@ -321,8 +404,6 @@ Public IP:
 ${env.PUBLIC_IP}
 
 ==================================================
-Share this URL with users.
-==================================================
 """
 
                 } else {
@@ -341,6 +422,8 @@ Share this URL with users.
             echo """
 ==================================================
               PIPELINE FAILED
+==================================================
+Check the stage above for the exact failure.
 ==================================================
 """
         }
