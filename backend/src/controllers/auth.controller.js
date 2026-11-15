@@ -14,7 +14,6 @@ export const signup = async (req, res) => {
       return res.status(400).json({ message: "Password must be at least 6 characters" });
     }
 
-    const NormalizedName = fullName.toUpperCase();
     const NormalizedEmail = email.toUpperCase();
 
 
@@ -26,7 +25,7 @@ export const signup = async (req, res) => {
     const hashedPassword = await bcrypt.hash(password, salt);
 
     const newUser = new User({
-      fullName: NormalizedName,
+      fullName: fullName,
       email: NormalizedEmail,
       password: hashedPassword,
     });
