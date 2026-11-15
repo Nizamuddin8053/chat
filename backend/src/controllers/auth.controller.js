@@ -14,7 +14,11 @@ export const signup = async (req, res) => {
       return res.status(400).json({ message: "Password must be at least 6 characters" });
     }
 
-    const user = await User.findOne({ email });
+    const NormalizedName = fullName.toUpperCase();
+    const NormalizedEmail = email.toUpperCase();
+
+
+    const user = await User.findOne({ email: NormalizedEmail });
 
     if (user) return res.status(400).json({ message: "Email already exists" });
 
@@ -22,8 +26,8 @@ export const signup = async (req, res) => {
     const hashedPassword = await bcrypt.hash(password, salt);
 
     const newUser = new User({
-      fullName,
-      email,
+      fullName: NormalizedName,
+      email: NormalizedEmail,
       password: hashedPassword,
     });
 
@@ -49,8 +53,10 @@ export const signup = async (req, res) => {
 
 export const login = async (req, res) => {
   const { email, password } = req.body;
+
+  const NormalizedEmail = email.toUpperCase();
   try {
-    const user = await User.findOne({ email });
+    const user = await User.findOne({ email: NormalizedEmail });
 
     if (!user) {
       return res.status(400).json({ message: "Invalid credentials" });
