@@ -16,7 +16,7 @@ import { app, server } from "./lib/socket.js";
 const __dirname = path.resolve();
 dotenv.config({ path: path.resolve(__dirname, "../.env") });
 
-const PORT = process.env.PORT;
+const PORT = process.env.PORT || 5001;
 
 app.use(express.json());
 app.use(cookieParser());
@@ -41,7 +41,14 @@ if (process.env.NODE_ENV === "production") {
   });
 }
 
-server.listen(PORT, () => {
-  console.log("server is running on PORT:" + PORT);
-  connectDB();
+server.listen(PORT, "0.0.0.0", () => {
+  console.log(`Chattify server running on port ${PORT}`);
+
+  connectDB().catch((error) => {
+    console.error("Database initialization failed:", error);
+  });
+});
+
+server.on("error", (error) => {
+  console.error("HTTP server error:", error);
 });
